@@ -109,6 +109,15 @@ def midas_value_to_distance(midas_value, K, C, max_valid_midas_value, min_valid_
     distance = K / denominator
     return distance
 
+
+def normalize_brightness(img_rgb):
+    """Apply CLAHE to the V channel of an RGB image to reduce lighting variance."""
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    v = hsv[:, :, 2]
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    hsv[:, :, 2] = clahe.apply(v)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+
 # --- Main Function (now accepts pre-loaded models and device) ---
 def main(video_path, yolo_model, midas_model, midas_transform, device, output_video_path=None,
            conf_threshold=0.4,
@@ -230,6 +239,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             current_detections_for_sort = detections_yolo
 
             img_rgb_midas = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img_rgb_midas = normalize_brightness(img_rgb_midas)
+
             input_batch_midas = midas_transform(img_rgb_midas).to(device)
 
             with torch.no_grad():
