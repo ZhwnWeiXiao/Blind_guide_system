@@ -145,27 +145,25 @@ class KalmanBoxTracker(object):
   def update(self, bbox, class_id=None, confidence=None):
     """
     更新目標的狀態。
-    
+
     參數:
       bbox: (ndarray) 新的檢測框 [x1, y1, x2, y2] NumPy 陣列；
-            如果為 None 或空陣列，則表示沒有新的檢測，只進行預測。
+            如果為 None 或空陣列，則表示沒有新的檢測，只更新內部狀態。
       class_id: (int) 檢測到的類別 ID。
       confidence: (float) 檢測的置信度。
     """
-    self.time_since_update = 0
-    self.history = [] # 清空歷史，因為狀態已更新
-    self.hits += 1
-    self.hit_streak += 1 # 連續擊中次數增加
-    
-    # 如果有新的檢測，則更新卡爾曼濾波器並儲存類別/置信度
     if bbox is not None and bbox.size > 0:
+        # 有新的檢測：更新濾波器並重置相關計數
+        self.time_since_update = 0
+        self.history = []
+        self.hits += 1
+        self.hit_streak += 1
         self.kf.update(self.convert_bbox_to_z(bbox))
-        self.class_id = class_id # 更新類別 ID
-        self.confidence = confidence # 更新置信度
-    else: 
-        # 如果沒有新的檢測，只進行預測 (用於跳幀)
-        self.kf.predict()
-        self.hit_streak = 0 # 沒有新的擊中，重置連擊數
+        self.class_id = class_id
+        self.confidence = confidence
+    else:
+        # 未匹配到新的檢測：保持預測結果並重置連擊數
+        self.hit_streak = 0
 
   def predict(self):
     """
@@ -287,17 +285,17 @@ class Sort(object):
     matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(det_boxes, trks, self.iou_threshold)
 
     # 4. 更新已匹配的追蹤器
-    for t,trk in enumerate(self.trackers):
-      if t not in unmatched_trks: # 如果追蹤器被匹配到了
-        d_indices = matched[np.where(matched[:,1]==t)[0],0] # 找到與當前追蹤器匹配的檢測索引
-        if d_indices.size > 0:
-            det_idx = d_indices[0] # 取第一個匹配的檢測
-            # 更新追蹤器狀態，並傳遞新的類別 ID 和置信度
-            trk.update(det_boxes[det_idx], det_class_ids[det_idx], det_confidences[det_idx])
-        else:
-            # 理論上已匹配的追蹤器應該總能找到對應的檢測
-            # 如果出現，可能是匹配邏輯問題，這裡做個防禦性處理
-            trk.update(None, None, None) # 讓 KalmanBoxTracker 只做預測
+    for t, trk in enumerate(self.trackers):
+        if t not in unmatched_trks:  # 如果追蹤器被匹配到了
+            d_indices = matched[np.where(matched[:, 1] == t)[0], 0]  # 找到與當前追蹤器匹配的檢測索引
+            if d_indices.size > 0:
+                det_idx = d_indices[0]  # 取第一個匹配的檢測
+                # 更新追蹤器狀態，並傳遞新的類別 ID 和置信度
+                trk.update(det_boxes[det_idx], det_class_ids[det_idx], det_confidences[det_idx])
+
+    # 4b. 處理未匹配的追蹤器，重置其連擊狀態以保持預測
+    for t in unmatched_trks:
+        self.trackers[t].update(None)
 
     # 5. 創建並初始化新的追蹤器 (針對未匹配到的檢測)
     for i in unmatched_dets:
