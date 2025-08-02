@@ -11,10 +11,11 @@ from PIL import Image, ImageDraw, ImageFont
 from sort import Sort
 from ultralytics import YOLO
 
-# Temporal Transformer for sequence modeling
+# Temporal Transformer for sequence modeling (3-layer patch-based)
 from temporal_transformer import TemporalTransformer
 
-# Initialize transformer (moved to device inside main)
+# Initialize transformer; moved to device inside ``main``.
+# Uses single-camera frames for temporal context.
 transformer = TemporalTransformer()
 
 # Global variables for the speech engine and lock
@@ -123,6 +124,56 @@ def normalize_brightness(img_rgb):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     hsv[:, :, 2] = clahe.apply(v)
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+
+
+def assess_collision_and_route(objects_info, distance_thresh):
+    """Assess potential collision threats and suggest a safe route.
+
+    Args:
+        objects_info: list of tuples ``(class_name, distance, track_id, direction,
+            is_static, in_main_path, fast_approach)`` produced in the main loop.
+        distance_thresh: float distance threshold in meters to consider objects
+            as potential hazards.
+
+    Returns:
+        A tuple ``(collision_msg, route_msg)`` where ``collision_msg`` describes
+        the most imminent threat (empty if none) and ``route_msg`` provides a
+        recommended direction to move.
+    """
+
+    if not objects_info:
+        return "", ""
+
+    left_blocked = any(obj[3] == "左前" and obj[1] <= distance_thresh for obj in objects_info)
+    right_blocked = any(obj[3] == "右前" and obj[1] <= distance_thresh for obj in objects_info)
+    center_blocked = any(obj[3] == "前方" and obj[1] <= distance_thresh for obj in objects_info)
+
+    # Consider obstacles in the main path that are either static or approaching quickly
+    threats = [
+        obj for obj in objects_info
+        if obj[5] and obj[1] <= distance_thresh and (obj[4] or obj[6])
+    ]
+
+    collision_msg = ""
+    if threats:
+        class_name, dist, _, direction, _, _, fast = min(threats, key=lambda x: x[1])
+        if fast:
+            collision_msg = f"{direction} {dist:.1f}公尺有快速接近的障礙物：{class_name}"
+        else:
+            collision_msg = f"{direction} {dist:.1f}公尺有障礙物：{class_name}"
+
+    route_msg = ""
+    if center_blocked:
+        if not left_blocked and not right_blocked:
+            route_msg = "建議直行"
+        elif not left_blocked:
+            route_msg = "建議向左行走"
+        elif not right_blocked:
+            route_msg = "建議向右行走"
+        else:
+            route_msg = "建議停下並等待"
+
+    return collision_msg, route_msg
 
 # --- Main Function (now accepts pre-loaded models and device) ---
 def main(video_path, yolo_model, midas_model, midas_transform, device, output_video_path=None,
@@ -499,28 +550,16 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             elif traffic_light_red_detected:
                 alert_message = "紅燈，請等待。"
                 current_frame_effective_level = "Traffic Red"
-            # NEW LOGIC for Obstacle Alert: Only consider static obstacles in the main path
-            elif True: # Use a placeholder True to simplify the nested conditions
-                closest_main_path_static_obstacle = None
-                min_obstacle_distance = float('inf')
-                
-                # Filter for static obstacles that are in the main path and within alert distance
-                eligible_obstacles = [
-                    obj for obj in all_detected_objects_info
-                    if obj[4] and obj[5] and obj[1] <= OBSTACLE_ALERT_DISTANCE # is_static_obstacle AND in_main_alert_path AND within OBSTACLE_ALERT_DISTANCE
-                ]
-
-                if eligible_obstacles:
-                    # Sort by distance and pick the closest one
-                    closest_main_path_static_obstacle = min(eligible_obstacles, key=lambda x: x[1])
-                    
-                if closest_main_path_static_obstacle:
-                    class_name, distance, _, direction, _, _, fast_approach = closest_main_path_static_obstacle
-                    # Use the specific direction for the main path obstacle and transformer-based motion
-                    if fast_approach:
-                        alert_message = f"{direction} {distance:.1f}公尺有障礙物快速接近：{class_name}，請注意！"
-                    else:
-                        alert_message = f"{direction} {distance:.1f}公尺有障礙物：{class_name}，請注意！"
+            # Use transformer motion cues and depth to assess collision threats and plan route
+            else:
+                collision_msg, route_msg = assess_collision_and_route(
+                    all_detected_objects_info, OBSTACLE_ALERT_DISTANCE
+                )
+                if collision_msg:
+                    alert_message = collision_msg
+                    if route_msg:
+                        alert_message = f"{alert_message}，{route_msg}"
+                    alert_message += "，請注意！"
                     current_frame_effective_level = "Obstacle Alert"
             
             # Continue with other light alerts if no critical obstacle alert
