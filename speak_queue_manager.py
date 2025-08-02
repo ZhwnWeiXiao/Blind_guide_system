@@ -16,13 +16,13 @@ class SpeechQueueManager:
         self.obj_id_map = {}
         self.max_age = max_age_seconds
 
-        # ✅ 初始化語音引擎一次
+        # ✅ 初始化一次 engine，並設定中文語音
         self.engine = pyttsx3.init()
         self._setup_voice()
         self.engine.setProperty('rate', 180)
         self.engine.setProperty('volume', 0.9)
 
-        # ✅ 啟動播報執行緒
+        # ✅ 啟動背景播報執行緒
         self.thread = threading.Thread(target=self._process_queue)
         self.thread.daemon = True
         self.thread.start()
@@ -80,7 +80,7 @@ class SpeechQueueManager:
                 try:
                     self.engine.say(item.message)
                     self.engine.runAndWait()
-                    print(f"[Speech] {item.message}")
+                    print(f"[✅ Speech] {item.message}")
                 except Exception as e:
                     print(f"[Speech Error] {e}")
             else:
