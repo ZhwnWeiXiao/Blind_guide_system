@@ -11,6 +11,12 @@ from PIL import Image, ImageDraw, ImageFont
 from sort import Sort
 from ultralytics import YOLO
 
+# Temporal Transformer for sequence modeling
+from temporal_transformer import TemporalTransformer
+
+# Initialize transformer (moved to device inside main)
+transformer = TemporalTransformer()
+
 # Global variables for the speech engine and lock
 _engine = None
 _lock = threading.Lock() # Lock for speech synthesis to ensure only one voice plays at a time
@@ -160,6 +166,12 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
     last_alert_time = 0
     last_spoken_alert_message = ""
     last_effective_danger_level = "Safe"
+    global transformer
+    transformer = transformer.to(device)
+    transformer.eval()
+    FRAME_BUFFER_SIZE = 8
+    frame_buffer = []
+    fast_approach_flag = False
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -232,6 +244,12 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
 
         frame_count += 1
 
+        # Maintain temporal frame buffer
+        frame_tensor_buffer = torch.from_numpy(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).permute(2, 0, 1).float() / 255.0
+        frame_buffer.append(frame_tensor_buffer)
+        if len(frame_buffer) > FRAME_BUFFER_SIZE:
+            frame_buffer.pop(0)
+
         current_detections_for_sort = np.empty((0, 6), dtype=np.float32)
 
         if frame_count == 1 or (frame_count % detection_interval == 0):
@@ -261,6 +279,18 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             grayscale_depth_output = cv2.normalize(depth_map_cached, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
             output_display_depth_cached = cv2.cvtColor(grayscale_depth_output, cv2.COLOR_GRAY2BGR)
 
+        if len(frame_buffer) == FRAME_BUFFER_SIZE:
+            with torch.no_grad():
+                seq_tensor = torch.stack(frame_buffer).to(device)
+                temporal_feats = transformer(seq_tensor)
+                if temporal_feats.size(0) >= 2:
+                    motion_score = (temporal_feats[-1] - temporal_feats[-2]).pow(2).mean().sqrt().item()
+                    fast_approach_flag = motion_score > 0.5
+                else:
+                    fast_approach_flag = False
+        else:
+            fast_approach_flag = False
+
         tracks = mot_tracker.update(current_detections_for_sort)
 
         if output_display_depth_cached is not None:
@@ -268,7 +298,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         else:
             raw_midas_map = np.zeros(frame.shape[:2], dtype=np.float32)
 
-        all_detected_objects_info = [] # (class_name, distance, track_id, direction_text, is_static_obstacle, in_main_alert_path)
+        all_detected_objects_info = [] # (class_name, distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, fast_approach_flag)
 
         pedestrian_red_light_detected = False
         pedestrian_green_light_detected = False
@@ -398,7 +428,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                class_id not in [PEDESTRIAN_GREEN_LIGHT_ID, PEDESTRIAN_RED_LIGHT_ID,
                                  TRAFFIC_LIGHT_GREEN_ID, TRAFFIC_LIGHT_RED_ID, TRAFFIC_LIGHT_YELLOW_ID]:
                 # Store all relevant information, including whether it's in the main alert path
-                all_detected_objects_info.append((class_name, current_distance, track_id, direction_text, is_static_obstacle, in_main_alert_path))
+                all_detected_objects_info.append((class_name, current_distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, fast_approach_flag))
 
             draw.rectangle([(x1_trk, y1_trk), (x2_trk, y2_trk)], outline=box_color_rgb, width=2)
 
@@ -439,10 +469,11 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             # Sort by distance for general printing, not necessarily for voice alert logic
             all_detected_objects_info.sort(key=lambda x: x[1]) 
             print(f"\n--- Frame {frame_count}: Detected Objects ---")
-            for i, (class_name, distance, track_id, direction, is_static_obstacle, in_main_path) in enumerate(all_detected_objects_info[:5]):
+            for i, (class_name, distance, track_id, direction, is_static_obstacle, in_main_path, fast_approach) in enumerate(all_detected_objects_info[:5]):
                 static_status = "(靜態)" if is_static_obstacle else "(移動)"
                 main_path_status = "(主路徑)" if in_main_path else "(側邊)"
-                print(f"  {i+1}. ID: {track_id}, 物體: {class_name}{static_status}{main_path_status}, 距離: {distance:.2f}m, 方向: {direction}")
+                approach_status = "(快速接近)" if fast_approach else ""
+                print(f"  {i+1}. ID: {track_id}, 物體: {class_name}{static_status}{main_path_status}{approach_status}, 距離: {distance:.2f}m, 方向: {direction}")
         else:
             if frame_count % 30 == 0:
                 print(f"\n--- Frame {frame_count}: 未檢測到任何物體 ---")
@@ -484,9 +515,12 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                     closest_main_path_static_obstacle = min(eligible_obstacles, key=lambda x: x[1])
                     
                 if closest_main_path_static_obstacle:
-                    class_name, distance, _, direction, _, _ = closest_main_path_static_obstacle
-                    # Use the specific direction for the main path obstacle
-                    alert_message = f"{direction} {distance:.1f}公尺有障礙物：{class_name}，請注意！"
+                    class_name, distance, _, direction, _, _, fast_approach = closest_main_path_static_obstacle
+                    # Use the specific direction for the main path obstacle and transformer-based motion
+                    if fast_approach:
+                        alert_message = f"{direction} {distance:.1f}公尺有障礙物快速接近：{class_name}，請注意！"
+                    else:
+                        alert_message = f"{direction} {distance:.1f}公尺有障礙物：{class_name}，請注意！"
                     current_frame_effective_level = "Obstacle Alert"
             
             # Continue with other light alerts if no critical obstacle alert
