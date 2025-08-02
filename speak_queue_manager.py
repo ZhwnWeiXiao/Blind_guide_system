@@ -11,7 +11,6 @@ class SpeechItem:
 
 class SpeechQueueManager:
     def __init__(self, max_age_seconds=5.0):
-        self.engine = pyttsx3.init()
         self.lock = threading.Lock()
         self.queue = deque()
         self.obj_id_map = {}  # obj_id -> SpeechItem
@@ -19,15 +18,6 @@ class SpeechQueueManager:
         self.thread = threading.Thread(target=self._process_queue)
         self.thread.daemon = True
         self.thread.start()
-
-        # Set Chinese voice if available
-        for voice in self.engine.getProperty('voices'):
-            if 'zh' in voice.id.lower() or 'chinese' in voice.name.lower():
-                self.engine.setProperty('voice', voice.id)
-                break
-
-        self.engine.setProperty('rate', 180)
-        self.engine.setProperty('volume', 0.9)
 
     def enqueue(self, message, obj_id=None):
         now = time.time()
@@ -44,7 +34,39 @@ class SpeechQueueManager:
                 if obj_id:
                     self.obj_id_map[obj_id] = item
 
+    def _create_engine(self):
+        """Initialize a pyttsx3 engine configured for Chinese output."""
+        engine = pyttsx3.init()
+        voices = engine.getProperty('voices')
+        chinese_voice_found = False
+        for voice in voices:
+            name = voice.name.lower()
+            vid = voice.id.lower()
+            if "taiwan" in name or "zh-tw" in vid:
+                engine.setProperty('voice', voice.id)
+                chinese_voice_found = True
+                print(f"Set Taiwan Chinese voice: {voice.name} (ID: {voice.id})")
+                break
+            elif "chinese" in name or "zh" in vid:
+                engine.setProperty('voice', voice.id)
+                chinese_voice_found = True
+                print(f"Set Chinese voice: {voice.name} (ID: {voice.id})")
+                break
+        if not chinese_voice_found:
+            print(
+                "Warning: No Chinese voice found. Voice prompts may not work correctly. "
+                "Please check if your system has a Chinese language pack installed."
+            )
+            if voices:
+                engine.setProperty('voice', voices[0].id)
+                print(f"Falling back to default voice: {voices[0].name}")
+
+        engine.setProperty('rate', 180)
+        engine.setProperty('volume', 0.9)
+        return engine
+
     def _process_queue(self):
+        """Background thread to speak queued messages."""
         while True:
             with self.lock:
                 # 清除過時項目
@@ -63,8 +85,10 @@ class SpeechQueueManager:
 
             if item:
                 try:
-                    self.engine.say(item.message)
-                    self.engine.runAndWait()
+                    engine = self._create_engine()
+                    engine.say(item.message)
+                    engine.runAndWait()
+                    engine.stop()
                 except Exception as e:
                     print(f"[Speech Error] {e}")
             else:
