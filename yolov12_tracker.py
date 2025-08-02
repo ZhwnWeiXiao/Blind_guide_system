@@ -3,8 +3,6 @@ import cv2
 import torch
 import numpy as np
 import time
-import pyttsx3
-import threading
 from PIL import Image, ImageDraw, ImageFont
 
 # Ensure sort.py is in the same directory
@@ -13,60 +11,14 @@ from ultralytics import YOLO
 
 # Temporal Transformer for sequence modeling (3-layer patch-based)
 from temporal_transformer import TemporalTransformer
+from speak_queue_manager import SpeechQueueManager
 
 # Initialize transformer; moved to device inside ``main``.
 # Uses single-camera frames for temporal context.
 transformer = TemporalTransformer()
 
-# Global variables for the speech engine and lock
-_engine = None
-_lock = threading.Lock() # Lock for speech synthesis to ensure only one voice plays at a time
-
-def init_tts_engine():
-    """Initializes the speech engine and sets a Chinese voice."""
-    global _engine
-    if _engine is None:
-        _engine = pyttsx3.init()
-        voices = _engine.getProperty('voices')
-        chinese_voice_found = False
-        for voice in voices:
-            if "taiwan" in voice.name.lower() or "zh-tw" in voice.id.lower():
-                _engine.setProperty('voice', voice.id)
-                chinese_voice_found = True
-                print(f"Set Taiwan Chinese voice: {voice.name} (ID: {voice.id})")
-                break
-            elif "chinese" in voice.name.lower() or "zh" in voice.id.lower():
-                _engine.setProperty('voice', voice.id)
-                chinese_voice_found = True
-                print(f"Set Chinese voice: {voice.name} (ID: {voice.id})")
-                break
-        if not chinese_voice_found:
-            print("Warning: No Chinese voice found. Voice prompts may not work correctly. Please check if your system has a Chinese language pack installed.")
-            if voices:
-                _engine.setProperty('voice', voices[0].id)
-                print(f"Falling back to default voice: {voices[0].name}")
-
-        _engine.setProperty('rate', 180)
-        _engine.setProperty('volume', 0.9)
-    return _engine
-
-def speak_async(message):
-    """Executes speech synthesis in a separate thread without blocking the main program."""
-    global _engine, _lock
-    if _engine is None:
-        _engine = init_tts_engine()
-
-    print(f"DEBUG: speak_async called with message: '{message}'")
-
-    def _speak():
-        with _lock:
-            _engine.say(message)
-            _engine.runAndWait()
-            print(f"DEBUG: _engine.runAndWait() finished for message: '{message}'")
-
-    speaker_thread = threading.Thread(target=_speak)
-    speaker_thread.daemon = True
-    speaker_thread.start()
+# Speech queue manager to serialize text-to-speech requests
+speech_mgr = SpeechQueueManager(max_age_seconds=5.0)
 
 def yolov12_detect(model, img, conf_threshold, iou_threshold, target_classes=None, imgsz=640):
     """
@@ -181,7 +133,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            iou_threshold=0.5,
            yolo_imgsz=640,
            sort_max_age=5,
-           sort_min_hits=3,
+           sort_min_hits=1,
            sort_iou_threshold=0.3,
            target_classes=None,
            detection_interval=3,
@@ -288,6 +240,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         print(f"Warning: Could not load Chinese font from {CHINESE_FONT_PATH}. Chinese characters may not display correctly.")
         font_pil = ImageFont.load_default()
 
+    prev_detections_for_sort = np.empty((0, 6), dtype=np.float32)
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -301,11 +255,14 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         if len(frame_buffer) > FRAME_BUFFER_SIZE:
             frame_buffer.pop(0)
 
-        current_detections_for_sort = np.empty((0, 6), dtype=np.float32)
+        is_detection_frame = frame_count == 1 or (frame_count % detection_interval == 0)
 
-        if frame_count == 1 or (frame_count % detection_interval == 0):
+        current_detections_for_sort = prev_detections_for_sort
+
+        if is_detection_frame:
             detections_yolo = yolov12_detect(yolo_model, frame, conf_threshold, iou_threshold, target_classes, yolo_imgsz)
             current_detections_for_sort = detections_yolo
+            prev_detections_for_sort = detections_yolo
 
             img_rgb_midas = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img_rgb_midas = normalize_brightness(img_rgb_midas)
@@ -577,7 +534,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
 
             should_speak = False
 
-            if alert_message:
+            if alert_message and is_detection_frame:
                 current_level_priority = alert_priority_order.get(current_frame_effective_level, 0)
                 last_level_priority = alert_priority_order.get(last_effective_danger_level, 0)
 
@@ -593,12 +550,12 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                         should_speak = True
 
                 if should_speak:
-                    speak_async(alert_message)
+                    speech_mgr.enqueue(alert_message, obj_id=current_frame_effective_level)
                     last_alert_time = current_time
                     last_spoken_alert_message = alert_message
                     last_effective_danger_level = current_frame_effective_level
                     print(f"  ACTION: Speaking: '{alert_message}'")
-            else:
+            elif is_detection_frame:
                 # 若無警告訊息，且冷卻時間已過，則重置語音狀態以便下次播報
                 if last_spoken_alert_message and (current_time - last_alert_time > DANGER_RESET_COOLDOWN):
                     last_spoken_alert_message = ""
@@ -677,7 +634,7 @@ if __name__ == '__main__':
     IOU_THRESHOLD = 0.5             # IoU threshold for Non-Maximum Suppression (NMS)
     YOLO_IMGSZ = 640                # YOLO input image size (can be int or 'auto')
     SORT_MAX_AGE = 10               # SORT tracker: Maximum number of frames an object can be missing
-    SORT_MIN_HITS = 2               # SORT tracker: Minimum number of detections required for an object to be considered a valid track
+    SORT_MIN_HITS = 1               # Reduced to 1 so tracks persist even when detections are not continuous
     SORT_IOU_THRESHOLD = 0.3        # SORT tracker: IoU threshold for object matching
 
     TARGET_CLASSES = None           # List of specific classes to detect (None for all classes)
