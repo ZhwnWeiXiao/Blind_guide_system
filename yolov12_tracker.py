@@ -3,8 +3,7 @@ import cv2
 import torch
 import numpy as np
 import time
-import pyttsx3
-import threading
+from speak_queue_manager import SpeechQueueManager
 from PIL import Image, ImageDraw, ImageFont
 
 # Ensure sort.py is in the same directory
@@ -18,55 +17,9 @@ from temporal_transformer import TemporalTransformer
 # Uses single-camera frames for temporal context.
 transformer = TemporalTransformer()
 
-# Global variables for the speech engine and lock
-_engine = None
-_lock = threading.Lock() # Lock for speech synthesis to ensure only one voice plays at a time
+# Global speech queue manager
+speech_mgr = SpeechQueueManager()
 
-def init_tts_engine():
-    """Initializes the speech engine and sets a Chinese voice."""
-    global _engine
-    if _engine is None:
-        _engine = pyttsx3.init()
-        voices = _engine.getProperty('voices')
-        chinese_voice_found = False
-        for voice in voices:
-            if "taiwan" in voice.name.lower() or "zh-tw" in voice.id.lower():
-                _engine.setProperty('voice', voice.id)
-                chinese_voice_found = True
-                print(f"Set Taiwan Chinese voice: {voice.name} (ID: {voice.id})")
-                break
-            elif "chinese" in voice.name.lower() or "zh" in voice.id.lower():
-                _engine.setProperty('voice', voice.id)
-                chinese_voice_found = True
-                print(f"Set Chinese voice: {voice.name} (ID: {voice.id})")
-                break
-        if not chinese_voice_found:
-            print("Warning: No Chinese voice found. Voice prompts may not work correctly. Please check if your system has a Chinese language pack installed.")
-            if voices:
-                _engine.setProperty('voice', voices[0].id)
-                print(f"Falling back to default voice: {voices[0].name}")
-
-        _engine.setProperty('rate', 180)
-        _engine.setProperty('volume', 0.9)
-    return _engine
-
-def speak_async(message):
-    """Executes speech synthesis in a separate thread without blocking the main program."""
-    global _engine, _lock
-    if _engine is None:
-        _engine = init_tts_engine()
-
-    print(f"DEBUG: speak_async called with message: '{message}'")
-
-    def _speak():
-        with _lock:
-            _engine.say(message)
-            _engine.runAndWait()
-            print(f"DEBUG: _engine.runAndWait() finished for message: '{message}'")
-
-    speaker_thread = threading.Thread(target=_speak)
-    speaker_thread.daemon = True
-    speaker_thread.start()
 
 def yolov12_detect(model, img, conf_threshold, iou_threshold, target_classes=None, imgsz=640):
     """
@@ -598,7 +551,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                         should_speak = True
 
                 if should_speak:
-                    speak_async(alert_message)
+                    speech_mgr.enqueue(alert_message)
                     last_alert_time = current_time
                     last_spoken_alert_message = alert_message
                     last_effective_danger_level = current_frame_effective_level
@@ -754,10 +707,6 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"Error: Could not load MiDaS image transforms.\nError message: {e}")
         exit()
-
-    # 初始化語音引擎 (確保只初始化一次)
-    init_tts_engine()
-    print("語音引擎初始化完成。")
 
     print(f"\n--- 開始處理資料夾中的影片: {VIDEO_FOLDER_PATH} ---")
 

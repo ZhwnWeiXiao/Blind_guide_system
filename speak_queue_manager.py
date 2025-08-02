@@ -20,11 +20,30 @@ class SpeechQueueManager:
         self.thread.daemon = True
         self.thread.start()
 
-        # Set Chinese voice if available
-        for voice in self.engine.getProperty('voices'):
-            if 'zh' in voice.id.lower() or 'chinese' in voice.name.lower():
+        # Set Chinese voice if available, with fallback and warning
+        voices = self.engine.getProperty('voices')
+        chinese_voice_found = False
+        for voice in voices:
+            name = voice.name.lower()
+            vid = voice.id.lower()
+            if "taiwan" in name or "zh-tw" in vid:
                 self.engine.setProperty('voice', voice.id)
+                chinese_voice_found = True
+                print(f"Set Taiwan Chinese voice: {voice.name} (ID: {voice.id})")
                 break
+            elif "chinese" in name or "zh" in vid:
+                self.engine.setProperty('voice', voice.id)
+                chinese_voice_found = True
+                print(f"Set Chinese voice: {voice.name} (ID: {voice.id})")
+                break
+        if not chinese_voice_found:
+            print(
+                "Warning: No Chinese voice found. Voice prompts may not work correctly. "
+                "Please check if your system has a Chinese language pack installed."
+            )
+            if voices:
+                self.engine.setProperty('voice', voices[0].id)
+                print(f"Falling back to default voice: {voices[0].name}")
 
         self.engine.setProperty('rate', 180)
         self.engine.setProperty('volume', 0.9)
