@@ -251,9 +251,13 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             break
 
         raw_frame_idx += 1
+
         is_detection_frame = (raw_frame_idx % frame_skip == 0)
         if not is_detection_frame:
-            continue
+
+        is_detection_frame = (raw_frame_idx % frame_skip == 0)
+        if not is_detection_frame:
+          continue
 
         frame_count += 1
 
