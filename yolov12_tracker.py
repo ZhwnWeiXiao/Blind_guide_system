@@ -137,7 +137,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            sort_min_hits=1,
            sort_iou_threshold=0.3,
            target_classes=None,
-           detection_interval=3,
+           process_fps=10,
            midas_output_scale_factor=1.0,
            # MiDaS depth value to distance conversion parameters
            MIDAS_K_CONVERT=1600,
@@ -185,6 +185,9 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
     fps_video = int(cap.get(cv2.CAP_PROP_FPS))
     if fps_video == 0:
         fps_video = 30
+    frame_skip = max(1, int(round(fps_video / process_fps)))
+    output_fps = max(1, fps_video // frame_skip)
+    print(f"Input FPS: {fps_video}. Processing every {frame_skip} frame(s) (~{output_fps} FPS).")
     original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
@@ -204,10 +207,11 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
     output_video_height = original_height
     if output_video_path:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_video_path, fourcc, fps_video, (output_video_width, output_video_height))
+        out = cv2.VideoWriter(output_video_path, fourcc, output_fps, (output_video_width, output_video_height))
 
-    print(f"Starting to process video: {video_path}...")
+    print(f"Starting to process video: {video_path} at ~{output_fps} FPS...")
     frame_count = 0
+    raw_frame_idx = 0
 
     MODEL_CLASSES = ['bicycle', 'bus', 'car', 'dog', 'Pedestrian Green Light',
                      'Pedestrian Red Light', 'person', 'scooter',
@@ -241,12 +245,14 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         print(f"Warning: Could not load Chinese font from {CHINESE_FONT_PATH}. Chinese characters may not display correctly.")
         font_pil = ImageFont.load_default()
 
-    prev_detections_for_sort = np.empty((0, 6), dtype=np.float32)
-
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
+        raw_frame_idx += 1
+        if raw_frame_idx % frame_skip != 0:
+            continue
 
         frame_count += 1
 
@@ -256,37 +262,30 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         if len(frame_buffer) > FRAME_BUFFER_SIZE:
             frame_buffer.pop(0)
 
-        is_detection_frame = frame_count == 1 or (frame_count % detection_interval == 0)
+        detections_yolo = yolov12_detect(yolo_model, frame, conf_threshold, iou_threshold, target_classes, yolo_imgsz)
 
-        current_detections_for_sort = prev_detections_for_sort
+        img_rgb_midas = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img_rgb_midas = normalize_brightness(img_rgb_midas)
 
-        if is_detection_frame:
-            detections_yolo = yolov12_detect(yolo_model, frame, conf_threshold, iou_threshold, target_classes, yolo_imgsz)
-            current_detections_for_sort = detections_yolo
-            prev_detections_for_sort = detections_yolo
+        input_batch_midas = midas_transform(img_rgb_midas).to(device)
 
-            img_rgb_midas = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img_rgb_midas = normalize_brightness(img_rgb_midas)
+        with torch.no_grad():
+            prediction_midas = midas_model(input_batch_midas)
 
-            input_batch_midas = midas_transform(img_rgb_midas).to(device)
+            target_height_midas = int(img_rgb_midas.shape[0] * midas_output_scale_factor)
+            target_width_midas = int(img_rgb_midas.shape[1] * midas_output_scale_factor)
 
-            with torch.no_grad():
-                prediction_midas = midas_model(input_batch_midas)
+            prediction_midas = torch.nn.functional.interpolate(
+                prediction_midas.unsqueeze(1),
+                size=(target_height_midas, target_width_midas),
+                mode="bicubic",
+                align_corners=False,
+            ).squeeze()
 
-                target_height_midas = int(img_rgb_midas.shape[0] * midas_output_scale_factor)
-                target_width_midas = int(img_rgb_midas.shape[1] * midas_output_scale_factor)
+        depth_map_cached = prediction_midas.cpu().numpy()
 
-                prediction_midas = torch.nn.functional.interpolate(
-                    prediction_midas.unsqueeze(1),
-                    size=(target_height_midas, target_width_midas),
-                    mode="bicubic",
-                    align_corners=False,
-                ).squeeze()
-
-            depth_map_cached = prediction_midas.cpu().numpy()
-
-            grayscale_depth_output = cv2.normalize(depth_map_cached, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-            output_display_depth_cached = cv2.cvtColor(grayscale_depth_output, cv2.COLOR_GRAY2BGR)
+        grayscale_depth_output = cv2.normalize(depth_map_cached, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+        output_display_depth_cached = cv2.cvtColor(grayscale_depth_output, cv2.COLOR_GRAY2BGR)
 
         if len(frame_buffer) == FRAME_BUFFER_SIZE:
             with torch.no_grad():
@@ -300,7 +299,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         else:
             fast_approach_flag = False
 
-        tracks = mot_tracker.update(current_detections_for_sort)
+        tracks = mot_tracker.update(detections_yolo)
 
         if output_display_depth_cached is not None:
             raw_midas_map = depth_map_cached
@@ -640,7 +639,7 @@ if __name__ == '__main__':
 
     TARGET_CLASSES = None           # List of specific classes to detect (None for all classes)
 
-    DETECTION_INTERVAL = 3          # Detect and estimate depth every N frames (3 means every third frame)
+    PROCESS_FPS = 10               # Downsample input video to this FPS for processing
 
     MIDAS_OUTPUT_SCALE_FACTOR = 1.0 # Scaling factor for MiDaS output depth map (1.0 means same size as input frame)
 
@@ -738,7 +737,7 @@ if __name__ == '__main__':
                  sort_min_hits=SORT_MIN_HITS,
                  sort_iou_threshold=SORT_IOU_THRESHOLD,
                  target_classes=TARGET_CLASSES,
-                 detection_interval=DETECTION_INTERVAL,
+                 process_fps=PROCESS_FPS,
                  midas_output_scale_factor=MIDAS_OUTPUT_SCALE_FACTOR,
                  MIDAS_K_CONVERT=MIDAS_K_CONVERT,
                  MIDAS_C_CONVERT=MIDAS_C_CONVERT,
