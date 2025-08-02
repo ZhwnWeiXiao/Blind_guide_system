@@ -184,7 +184,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            sort_min_hits=3,
            sort_iou_threshold=0.3,
            target_classes=None,
-           detection_interval=1,
+           detection_interval=3,
            midas_output_scale_factor=1.0,
            # MiDaS depth value to distance conversion parameters
            MIDAS_K_CONVERT=1600,
@@ -682,7 +682,7 @@ if __name__ == '__main__':
 
     TARGET_CLASSES = None           # List of specific classes to detect (None for all classes)
 
-    DETECTION_INTERVAL = 1          # Detect and estimate depth every N frames (1 means every frame)
+    DETECTION_INTERVAL = 3          # Detect and estimate depth every N frames (3 means every third frame)
 
     MIDAS_OUTPUT_SCALE_FACTOR = 1.0 # Scaling factor for MiDaS output depth map (1.0 means same size as input frame)
 
