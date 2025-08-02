@@ -18,7 +18,7 @@ class SpeechQueueManager:
 
         # ✅ 初始化一次 engine，並設定中文語音
         self.engine = pyttsx3.init()
-        self._setup_voice()
+        self._setup_voice(self.engine)
         self.engine.setProperty('rate', 180)
         self.engine.setProperty('volume', 0.9)
 
@@ -27,26 +27,26 @@ class SpeechQueueManager:
         self.thread.daemon = True
         self.thread.start()
 
-    def _setup_voice(self):
-        voices = self.engine.getProperty('voices')
+    def _setup_voice(self, engine):
+        voices = engine.getProperty('voices')
         chinese_voice_found = False
         for voice in voices:
             name = voice.name.lower()
             vid = voice.id.lower()
             if "taiwan" in name or "zh-tw" in vid:
-                self.engine.setProperty('voice', voice.id)
+                engine.setProperty('voice', voice.id)
                 chinese_voice_found = True
                 print(f"✅ 使用台灣中文語音: {voice.name}")
                 break
             elif "chinese" in name or "zh" in vid:
-                self.engine.setProperty('voice', voice.id)
+                engine.setProperty('voice', voice.id)
                 chinese_voice_found = True
                 print(f"✅ 使用中文語音: {voice.name}")
                 break
         if not chinese_voice_found:
             print("⚠️ 找不到中文語音，使用預設語音")
             if voices:
-                self.engine.setProperty('voice', voices[0].id)
+                engine.setProperty('voice', voices[0].id)
 
     def enqueue(self, message, obj_id=None):
         now = time.time()
@@ -61,6 +61,27 @@ class SpeechQueueManager:
                 self.queue.append(item)
                 if obj_id:
                     self.obj_id_map[obj_id] = item
+
+    def play_next_if_available(self):
+        """Pop and speak the oldest item if present."""
+        item = None
+        with self.lock:
+            if self.queue:
+                item = self.queue.popleft()
+                if item.obj_id in self.obj_id_map:
+                    del self.obj_id_map[item.obj_id]
+
+        if item:
+            try:
+                engine = pyttsx3.init()
+                self._setup_voice(engine)
+                engine.setProperty('rate', 180)
+                engine.setProperty('volume', 0.9)
+                engine.say(item.message)
+                engine.runAndWait()
+                print(f"[✅ Speech] {item.message}")
+            except Exception as e:
+                print(f"[Speech Error] {e}")
 
     def _process_queue(self):
         while True:

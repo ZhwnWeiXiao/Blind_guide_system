@@ -254,10 +254,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
 
         is_detection_frame = (raw_frame_idx % frame_skip == 0)
         if not is_detection_frame:
-
-        is_detection_frame = (raw_frame_idx % frame_skip == 0)
-        if not is_detection_frame:
-          continue
+            continue
 
         frame_count += 1
 
@@ -556,6 +553,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
 
                 if should_speak:
                     speech_mgr.enqueue(alert_message)
+                    speech_mgr.play_next_if_available()
                     last_alert_time = current_time
                     last_spoken_alert_message = alert_message
                     last_effective_danger_level = current_frame_effective_level
