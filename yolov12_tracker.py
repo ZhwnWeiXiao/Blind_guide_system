@@ -181,7 +181,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            iou_threshold=0.5,
            yolo_imgsz=640,
            sort_max_age=5,
-           sort_min_hits=3,
+           sort_min_hits=1,
            sort_iou_threshold=0.3,
            target_classes=None,
            detection_interval=3,
@@ -288,6 +288,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         print(f"Warning: Could not load Chinese font from {CHINESE_FONT_PATH}. Chinese characters may not display correctly.")
         font_pil = ImageFont.load_default()
 
+    prev_detections_for_sort = np.empty((0, 6), dtype=np.float32)
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -301,11 +303,14 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         if len(frame_buffer) > FRAME_BUFFER_SIZE:
             frame_buffer.pop(0)
 
-        current_detections_for_sort = np.empty((0, 6), dtype=np.float32)
+        is_detection_frame = frame_count == 1 or (frame_count % detection_interval == 0)
 
-        if frame_count == 1 or (frame_count % detection_interval == 0):
+        current_detections_for_sort = prev_detections_for_sort
+
+        if is_detection_frame:
             detections_yolo = yolov12_detect(yolo_model, frame, conf_threshold, iou_threshold, target_classes, yolo_imgsz)
             current_detections_for_sort = detections_yolo
+            prev_detections_for_sort = detections_yolo
 
             img_rgb_midas = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img_rgb_midas = normalize_brightness(img_rgb_midas)
@@ -577,7 +582,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
 
             should_speak = False
 
-            if alert_message:
+            if alert_message and is_detection_frame:
                 current_level_priority = alert_priority_order.get(current_frame_effective_level, 0)
                 last_level_priority = alert_priority_order.get(last_effective_danger_level, 0)
 
@@ -598,7 +603,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                     last_spoken_alert_message = alert_message
                     last_effective_danger_level = current_frame_effective_level
                     print(f"  ACTION: Speaking: '{alert_message}'")
-            else:
+            elif is_detection_frame:
                 # 若無警告訊息，且冷卻時間已過，則重置語音狀態以便下次播報
                 if last_spoken_alert_message and (current_time - last_alert_time > DANGER_RESET_COOLDOWN):
                     last_spoken_alert_message = ""
@@ -677,7 +682,7 @@ if __name__ == '__main__':
     IOU_THRESHOLD = 0.5             # IoU threshold for Non-Maximum Suppression (NMS)
     YOLO_IMGSZ = 640                # YOLO input image size (can be int or 'auto')
     SORT_MAX_AGE = 10               # SORT tracker: Maximum number of frames an object can be missing
-    SORT_MIN_HITS = 2               # SORT tracker: Minimum number of detections required for an object to be considered a valid track
+    SORT_MIN_HITS = 1               # Reduced to 1 so tracks persist even when detections are not continuous
     SORT_IOU_THRESHOLD = 0.3        # SORT tracker: IoU threshold for object matching
 
     TARGET_CLASSES = None           # List of specific classes to detect (None for all classes)
