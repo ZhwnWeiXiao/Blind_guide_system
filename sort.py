@@ -309,9 +309,11 @@ class Sort(object):
     ret = []
     i = len(self.trackers)
     for trk in reversed(self.trackers): # 從後往前遍歷，方便刪除
-        # 判斷追蹤器是否為活躍狀態 (未更新時間小於最大值，且擊中次數滿足最小要求或在初始幀內)
+        # 判斷追蹤器是否為活躍狀態 (未更新時間小於最大值，且**累積**擊中次數滿足最小要求或在初始幀內)
+        # 原邏輯使用 hit_streak(連續擊中次數)，在跳幀偵測時會因為未連續偵測而導致追蹤器過早消失。
+        # 改為使用 hits(累積擊中次數) 以確保即使不是每幀都偵測，追蹤器仍能持續回傳預測位置。
         if (trk.time_since_update < self.max_age) and \
-                (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
+                (trk.hits >= self.min_hits or self.frame_count <= self.min_hits):
             
             bbox_state = trk.get_state()[0] # 追蹤器預測的邊界框狀態
 
