@@ -16,39 +16,38 @@ class SpeechQueueManager:
         self.obj_id_map = {}
         self.max_age = max_age_seconds
 
-        # ✅ 初始化語音引擎一次（供整個類別共用）
-        self.engine = pyttsx3.init()
-        self._setup_voice()
-
-        self.engine.setProperty('rate', 180)
-        self.engine.setProperty('volume', 0.9)
-
         # ✅ 啟動播報執行緒
         self.thread = threading.Thread(target=self._process_queue)
         self.thread.daemon = True
         self.thread.start()
 
-    def _setup_voice(self):
-        voices = self.engine.getProperty('voices')
+    def _create_engine(self):
+        """Initialize a pyttsx3 engine configured for Chinese output."""
+        engine = pyttsx3.init()
+        voices = engine.getProperty('voices')
         chinese_voice_found = False
         for voice in voices:
             name = voice.name.lower()
             vid = voice.id.lower()
             if "taiwan" in name or "zh-tw" in vid:
-                self.engine.setProperty('voice', voice.id)
+                engine.setProperty('voice', voice.id)
                 chinese_voice_found = True
                 print(f"Set Taiwan Chinese voice: {voice.name} (ID: {voice.id})")
                 break
             elif "chinese" in name or "zh" in vid:
-                self.engine.setProperty('voice', voice.id)
+                engine.setProperty('voice', voice.id)
                 chinese_voice_found = True
                 print(f"Set Chinese voice: {voice.name} (ID: {voice.id})")
                 break
         if not chinese_voice_found:
             print("Warning: No Chinese voice found. Using fallback.")
             if voices:
-                self.engine.setProperty('voice', voices[0].id)
+                engine.setProperty('voice', voices[0].id)
                 print(f"Fallback voice: {voices[0].name}")
+
+        engine.setProperty('rate', 180)
+        engine.setProperty('volume', 0.9)
+        return engine
 
     def enqueue(self, message, obj_id=None):
         now = time.time()
@@ -65,10 +64,11 @@ class SpeechQueueManager:
                     self.obj_id_map[obj_id] = item
 
     def _process_queue(self):
+        """Background thread to speak queued messages."""
         while True:
+            item = None
             with self.lock:
                 now = time.time()
-                # 清理過期
                 while self.queue and (now - self.queue[0].timestamp > self.max_age):
                     old_item = self.queue.popleft()
                     if old_item.obj_id in self.obj_id_map:
@@ -78,13 +78,13 @@ class SpeechQueueManager:
                     item = self.queue.popleft()
                     if item.obj_id in self.obj_id_map:
                         del self.obj_id_map[item.obj_id]
-                else:
-                    item = None
 
             if item:
                 try:
-                    self.engine.say(item.message)
-                    self.engine.runAndWait()
+                    engine = self._create_engine()
+                    engine.say(item.message)
+                    engine.runAndWait()
+                    engine.stop()
                     print(f"[Speech] {item.message}")
                 except Exception as e:
                     print(f"[Speech Error] {e}")
