@@ -165,7 +165,9 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            DANGER_RESET_COOLDOWN=2.0,
            # Screen display parameters
            screen_width=1920,
-           screen_height=1080
+           screen_height=1080,
+           # Optional callback for external frame display
+           display_callback=None
            ):
 
     # Initialize SORT tracker (moved inside main as it's stateful per video)
@@ -573,11 +575,13 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         display_width_scaled = int(display_width_current * scale * 0.4) # Adjusted for better view on common screens
         display_height_scaled = int(display_height_current * scale * 0.4)
 
-        window_name = "Obstacle Detection and Alert for Visually Impaired"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, display_width_scaled, display_height_scaled)
-
-        cv2.imshow(window_name, combined_output_frame)
+        if display_callback:
+            display_callback(combined_output_frame)
+        else:
+            window_name = "Obstacle Detection and Alert for Visually Impaired"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, display_width_scaled, display_height_scaled)
+            cv2.imshow(window_name, combined_output_frame)
 
         if out:
             if combined_output_frame.shape[1] != output_video_width or \
@@ -587,13 +591,14 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             else:
                 out.write(combined_output_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if display_callback is None and cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     if out:
         out.release()
-    cv2.destroyAllWindows()
+    if display_callback is None:
+        cv2.destroyAllWindows()
     print(f"Video: {video_path} processing complete.")
 
 
