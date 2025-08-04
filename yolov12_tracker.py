@@ -3,6 +3,7 @@ import cv2
 import torch
 import numpy as np
 import time
+from collections import deque
 from speak_queue_manager import SpeechQueueManager
 from PIL import Image, ImageDraw, ImageFont
 
@@ -79,14 +80,16 @@ def normalize_brightness(img_rgb):
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
 
-def assess_collision_and_route(objects_info, distance_thresh):
+def assess_collision_and_route(objects_info, distance_thresh, speed_thresh=1.0):
     """Assess potential collision threats and suggest a safe route.
 
     Args:
         objects_info: list of tuples ``(class_name, distance, track_id, direction,
-            is_static, in_main_path, fast_approach)`` produced in the main loop.
+            is_static, in_main_path, approach_speed)`` produced in the main loop.
         distance_thresh: float distance threshold in meters to consider objects
             as potential hazards.
+        speed_thresh: float speed threshold (m/s) above which an object is
+            considered to be fast approaching.
 
     Returns:
         A tuple ``(collision_msg, route_msg)`` where ``collision_msg`` describes
@@ -104,12 +107,13 @@ def assess_collision_and_route(objects_info, distance_thresh):
     # Consider obstacles in the main path that are either static or approaching quickly
     threats = [
         obj for obj in objects_info
-        if obj[5] and obj[1] <= distance_thresh and (obj[4] or obj[6])
+        if obj[5] and obj[1] <= distance_thresh and (obj[4] or obj[6] > speed_thresh)
     ]
 
     collision_msg = ""
     if threats:
-        class_name, dist, _, direction, _, _, fast = min(threats, key=lambda x: x[1])
+        class_name, dist, _, direction, _, _, speed = min(threats, key=lambda x: x[1])
+        fast = speed > speed_thresh
         if fast:
             collision_msg = f"{direction} {dist:.1f}公尺有快速接近的障礙物：{class_name}"
         else:
@@ -173,9 +177,6 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
     global transformer
     transformer = transformer.to(device)
     transformer.eval()
-    FRAME_BUFFER_SIZE = 8
-    frame_buffer = []
-    fast_approach_flag = False
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -236,6 +237,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
     MIDAS_HISTORY_LENGTH = 15
     MIDAS_TRIM_PERCENTAGE = 0.1
 
+    FAST_APPROACH_SPEED_THRESHOLD = 1.0  # m/s
+
     CHINESE_FONT_PATH = 'C:/Windows/Fonts/simhei.ttf' # Default Windows Chinese font
 
     try:
@@ -257,12 +260,6 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             continue
 
         frame_count += 1
-
-        # Maintain temporal frame buffer
-        frame_tensor_buffer = torch.from_numpy(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).permute(2, 0, 1).float() / 255.0
-        frame_buffer.append(frame_tensor_buffer)
-        if len(frame_buffer) > FRAME_BUFFER_SIZE:
-            frame_buffer.pop(0)
 
         detections_yolo = yolov12_detect(yolo_model, frame, conf_threshold, iou_threshold, target_classes, yolo_imgsz)
 
@@ -289,18 +286,6 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         grayscale_depth_output = cv2.normalize(depth_map_cached, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
         output_display_depth_cached = cv2.cvtColor(grayscale_depth_output, cv2.COLOR_GRAY2BGR)
 
-        if len(frame_buffer) == FRAME_BUFFER_SIZE:
-            with torch.no_grad():
-                seq_tensor = torch.stack(frame_buffer).to(device)
-                temporal_feats = transformer(seq_tensor)
-                if temporal_feats.size(0) >= 2:
-                    motion_score = (temporal_feats[-1] - temporal_feats[-2]).pow(2).mean().sqrt().item()
-                    fast_approach_flag = motion_score > 0.5
-                else:
-                    fast_approach_flag = False
-        else:
-            fast_approach_flag = False
-
         tracks = mot_tracker.update(detections_yolo)
 
         if output_display_depth_cached is not None:
@@ -308,7 +293,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
         else:
             raw_midas_map = np.zeros(frame.shape[:2], dtype=np.float32)
 
-        all_detected_objects_info = [] # (class_name, distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, fast_approach_flag)
+        all_detected_objects_info = [] # (class_name, distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, approach_speed)
 
         pedestrian_red_light_detected = False
         pedestrian_green_light_detected = False
@@ -432,13 +417,20 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             if main_path_left_bound <= center_x_bbox <= main_path_right_bound:
                 in_main_alert_path = True
 
+            approach_speed = 0.0
+            if not is_object_too_far and current_distance is not None and current_distance != float('inf'):
+                history = tracked_object_distance_history.setdefault(track_id, deque(maxlen=DISTANCE_HISTORY_LENGTH))
+                if len(history) > 0:
+                    prev_distance = history[-1]
+                    approach_speed = (prev_distance - current_distance) * output_fps
+                history.append(current_distance)
 
             if not is_object_too_far and current_distance is not None and \
                not display_raw_midas_value and \
                class_id not in [PEDESTRIAN_GREEN_LIGHT_ID, PEDESTRIAN_RED_LIGHT_ID,
                                  TRAFFIC_LIGHT_GREEN_ID, TRAFFIC_LIGHT_RED_ID, TRAFFIC_LIGHT_YELLOW_ID]:
                 # Store all relevant information, including whether it's in the main alert path
-                all_detected_objects_info.append((class_name, current_distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, fast_approach_flag))
+                all_detected_objects_info.append((class_name, current_distance, track_id, direction_text, is_static_obstacle, in_main_alert_path, approach_speed))
 
             draw.rectangle([(x1_trk, y1_trk), (x2_trk, y2_trk)], outline=box_color_rgb, width=2)
 
@@ -479,10 +471,10 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             # Sort by distance for general printing, not necessarily for voice alert logic
             all_detected_objects_info.sort(key=lambda x: x[1]) 
             print(f"\n--- Frame {frame_count}: Detected Objects ---")
-            for i, (class_name, distance, track_id, direction, is_static_obstacle, in_main_path, fast_approach) in enumerate(all_detected_objects_info[:5]):
+            for i, (class_name, distance, track_id, direction, is_static_obstacle, in_main_path, approach_speed) in enumerate(all_detected_objects_info[:5]):
                 static_status = "(靜態)" if is_static_obstacle else "(移動)"
                 main_path_status = "(主路徑)" if in_main_path else "(側邊)"
-                approach_status = "(快速接近)" if fast_approach else ""
+                approach_status = "(快速接近)" if approach_speed > FAST_APPROACH_SPEED_THRESHOLD else ""
                 print(f"  {i+1}. ID: {track_id}, 物體: {class_name}{static_status}{main_path_status}{approach_status}, 距離: {distance:.2f}m, 方向: {direction}")
         else:
             if frame_count % 30 == 0:
@@ -512,7 +504,7 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
             # Use transformer motion cues and depth to assess collision threats and plan route
             else:
                 collision_msg, route_msg = assess_collision_and_route(
-                    all_detected_objects_info, OBSTACLE_ALERT_DISTANCE
+                    all_detected_objects_info, OBSTACLE_ALERT_DISTANCE, FAST_APPROACH_SPEED_THRESHOLD
                 )
                 if collision_msg:
                     alert_message = collision_msg
