@@ -73,12 +73,8 @@ class SpeechQueueManager:
 
         if item:
             try:
-                engine = pyttsx3.init()
-                self._setup_voice(engine)
-                engine.setProperty('rate', 180)
-                engine.setProperty('volume', 0.9)
-                engine.say(item.message)
-                engine.runAndWait()
+                self.engine.say(item.message)
+                self.engine.runAndWait()
                 print(f"[✅ Speech] {item.message}")
             except Exception as e:
                 print(f"[Speech Error] {e}")
