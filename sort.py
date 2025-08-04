@@ -47,7 +47,7 @@ def associate_detections_to_trackers(detections, trackers, iou_threshold = 0.3):
     """
     if(len(trackers)==0):
         # 如果沒有追蹤器，所有檢測都是未匹配的
-        return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,0),dtype=int)
+        return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,),dtype=int)
 
     iou_matrix = iou_batch(detections, trackers)
 
