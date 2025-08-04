@@ -8,6 +8,13 @@
 1. 建立並啟用 Python 3.8 以上的虛擬環境。
 2. 安裝必要套件：
 
+3. （若使用 Git LFS）請先安裝並下載大型檔案：
+
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
+
 =======
 =======
 # Blind Guide System
@@ -23,10 +30,17 @@ This project demonstrates a video‑based assistance pipeline for visually impai
    pip install torch ultralytics opencv-python pyttsx3 pillow numpy
    ```
 
+3. If the repository uses Git LFS, install it and pull the required files:
+
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
+
 ## 使用方式
 
 1. **準備資源**
-   - 下載並將 YOLOv12 權重路徑填入 `yolov12_tracker.py` 內的 `YOUR_YOLOV12_WEIGHTS`。
+   - 將 YOLOv12 的 `best.pt` 權重檔放在 `weights/` 目錄中，或透過 GUI／程式參數指定權重路徑。
    - 將待分析的影片放在資料夾中，並設定 `VIDEO_FOLDER_PATH` 為該路徑。
 
 2. **執行程式**
@@ -56,7 +70,7 @@ This project demonstrates a video‑based assistance pipeline for visually impai
 ## Usage
 
 1. **Prepare resources**
-   - Download YOLOv12 weights and set the path in `yolov12_tracker.py` at `YOUR_YOLOV12_WEIGHTS`.
+   - Place the YOLOv12 `best.pt` weights file in the `weights/` directory, or specify a custom path via the GUI or command-line parameter.
    - Place the videos you want to analyze in a folder and update `VIDEO_FOLDER_PATH`.
 
 2. **Run detection**
@@ -72,7 +86,7 @@ This project demonstrates a video‑based assistance pipeline for visually impai
 所有參數都集中在 `yolov12_tracker.py` 末端的「設定區塊」，可依需求修改：
 
 - **路徑相關**
-  - `YOUR_YOLOV12_WEIGHTS`：YOLOv12 權重檔路徑。
+  - `YOLOV12_WEIGHTS_PATH`：YOLOv12 權重檔路徑（預設為 `weights/best.pt`，亦可透過 GUI 或參數指定）。
   - `VIDEO_FOLDER_PATH`：欲處理的影片資料夾。
   - `OUTPUT_VIDEO_PATH`：若要儲存加上標註的輸出影片，填入檔案路徑；預設為 `None` 表示不儲存。
 
