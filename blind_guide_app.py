@@ -3,13 +3,16 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+import cv2
+from PIL import Image, ImageTk
 import torch
 
 # Import detection pipeline
 from yolov12_tracker import main as run_pipeline, load_yolov12_model
 
 # Default model settings
-YOLO_WEIGHTS_PATH = os.path.join('weights', 'best.pt')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+YOLO_WEIGHTS_PATH = os.path.join(BASE_DIR, 'weights', 'best.pt')
 MIDAS_MODEL_TYPE = 'DPT_Hybrid'
 
 
@@ -54,6 +57,10 @@ class BlindGuideApp:
         tk.Button(action_frame, text='開始偵測', command=self.start_detection).pack(side='left', padx=5)
         tk.Button(action_frame, text='離開', command=master.quit).pack(side='left', padx=5)
 
+        # Image display placeholder
+        self.image_label = tk.Label(master)
+        self.image_label.pack(padx=10, pady=10)
+
         self._toggle_video_button()
 
     def _toggle_video_button(self):
@@ -90,7 +97,18 @@ class BlindGuideApp:
             midas_model=midas_model,
             midas_transform=midas_transform,
             device=device,
+            display_callback=self._display_frame,
         )
+
+    def _display_frame(self, frame):
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img_rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.master.after(0, self._update_image_label, imgtk)
+
+    def _update_image_label(self, imgtk):
+        self.image_label.imgtk = imgtk
+        self.image_label.config(image=imgtk)
 
 
 if __name__ == '__main__':
