@@ -9,7 +9,8 @@ import torch
 from yolov12_tracker import main as run_pipeline, load_yolov12_model
 
 # Default model settings
-YOLO_WEIGHTS_PATH = os.path.join('weights', 'best.pt')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+YOLO_WEIGHTS_PATH = os.path.join(BASE_DIR, 'weights', 'best.pt')
 MIDAS_MODEL_TYPE = 'DPT_Hybrid'
 
 
