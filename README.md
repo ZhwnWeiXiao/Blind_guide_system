@@ -7,6 +7,8 @@
 
 1. 建立並啟用 Python 3.8 以上的虛擬環境。
 2. 安裝必要套件：
+
+=======
 =======
 # Blind Guide System
 
@@ -28,6 +30,28 @@ This project demonstrates a video‑based assistance pipeline for visually impai
    - 將待分析的影片放在資料夾中，並設定 `VIDEO_FOLDER_PATH` 為該路徑。
 
 2. **執行程式**
+
+  ```bash
+  python yolov12_tracker.py
+  ```
+
+   程式會載入模型、處理資料夾內的每支影片、追蹤物體、估計深度並透過語音提示障礙物及交通號誌。
+
+3. **使用圖形介面**
+
+   若希望直接透過視覺化介面操作，可執行：
+
+   ```bash
+   python blind_guide_app.py
+   ```
+
+   介面提供兩種模式：
+
+   - **影片偵測**：選取單支影片進行處理。
+   - **即時偵測**：啟用攝影機進行即時分析。
+
+   選擇「影片偵測」時需另行指定影片檔案，按下「開始偵測」後即會載入 YOLO 與 MiDaS 權重並運行主流程。
+=======
 =======
 ## Usage
 
@@ -82,6 +106,7 @@ This project demonstrates a video‑based assistance pipeline for visually impai
 
 - 首次執行時 `torch.hub` 會下載 MiDaS 模型，需要網路連線。
 - 若需語音提示請確認系統有可用的音訊輸出裝置。
+
 =======
    The script loads the models, processes each video in the folder, tracks objects, estimates depth, and speaks alerts for approaching obstacles and traffic light signals.
 
@@ -102,5 +127,4 @@ This project demonstrates a video‑based assistance pipeline for visually impai
 
 - MiDaS models are downloaded via `torch.hub` on first run.
 - Ensure audio output is available for voice alerts.
-
 
