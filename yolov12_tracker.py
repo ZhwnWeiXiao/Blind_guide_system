@@ -18,9 +18,6 @@ from temporal_transformer import TemporalTransformer
 # Uses single-camera frames for temporal context.
 transformer = TemporalTransformer()
 
-# Global speech queue manager
-speech_mgr = SpeechQueueManager()
-
 
 def yolov12_detect(model, img, conf_threshold, iou_threshold, target_classes=None, imgsz=640):
     """
@@ -167,7 +164,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
            screen_width=1920,
            screen_height=1080,
            # Optional callback for external frame display
-           display_callback=None
+           display_callback=None,
+           speech_mgr: SpeechQueueManager | None = None
            ):
 
     # Initialize SORT tracker (moved inside main as it's stateful per video)
@@ -546,8 +544,8 @@ def main(video_path, yolo_model, midas_model, midas_transform, device, output_vi
                         should_speak = True
 
                 if should_speak:
-                    speech_mgr.enqueue(alert_message)
-                    speech_mgr.play_next_if_available()
+                    if speech_mgr:
+                        speech_mgr.enqueue(alert_message)
                     last_alert_time = current_time
                     last_spoken_alert_message = alert_message
                     last_effective_danger_level = current_frame_effective_level

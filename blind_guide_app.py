@@ -9,6 +9,7 @@ import torch
 
 # Import detection pipeline
 from yolov12_tracker import main as run_pipeline, load_yolov12_model
+from speak_queue_manager import SpeechQueueManager
 
 # Default model settings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +64,10 @@ class BlindGuideApp:
 
         self._toggle_video_button()
 
+        # Initialize speech manager on main thread
+        self.speech_mgr = SpeechQueueManager()
+        self._schedule_speech()
+
     def _toggle_video_button(self):
         if self.mode.get() == 'video':
             self.select_btn.config(state='normal')
@@ -98,6 +103,7 @@ class BlindGuideApp:
             midas_transform=midas_transform,
             device=device,
             display_callback=self._display_frame,
+            speech_mgr=self.speech_mgr,
         )
 
     def _display_frame(self, frame):
@@ -109,6 +115,10 @@ class BlindGuideApp:
     def _update_image_label(self, imgtk):
         self.image_label.imgtk = imgtk
         self.image_label.config(image=imgtk)
+
+    def _schedule_speech(self):
+        self.speech_mgr.process_queue()
+        self.master.after(100, self._schedule_speech)
 
 
 if __name__ == '__main__':

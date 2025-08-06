@@ -22,11 +22,6 @@ class SpeechQueueManager:
         self.engine.setProperty('rate', 180)
         self.engine.setProperty('volume', 0.9)
 
-        # ✅ 啟動背景播報執行緒
-        self.thread = threading.Thread(target=self._process_queue)
-        self.thread.daemon = True
-        self.thread.start()
-
     def _setup_voice(self, engine):
         voices = engine.getProperty('voices')
         chinese_voice_found = False
@@ -62,10 +57,19 @@ class SpeechQueueManager:
                 if obj_id:
                     self.obj_id_map[obj_id] = item
 
-    def play_next_if_available(self):
-        """Pop and speak the oldest item if present."""
+    def process_queue(self):
+        """Pop and speak the oldest item if present.
+
+        This should be called from the main GUI thread to ensure
+        ``pyttsx3`` executes safely.
+        """
         item = None
         with self.lock:
+            now = time.time()
+            while self.queue and (now - self.queue[0].timestamp > self.max_age):
+                old = self.queue.popleft()
+                if old.obj_id in self.obj_id_map:
+                    del self.obj_id_map[old.obj_id]
             if self.queue:
                 item = self.queue.popleft()
                 if item.obj_id in self.obj_id_map:
@@ -78,27 +82,3 @@ class SpeechQueueManager:
                 print(f"[✅ Speech] {item.message}")
             except Exception as e:
                 print(f"[Speech Error] {e}")
-
-    def _process_queue(self):
-        while True:
-            item = None
-            with self.lock:
-                now = time.time()
-                while self.queue and (now - self.queue[0].timestamp > self.max_age):
-                    old = self.queue.popleft()
-                    if old.obj_id in self.obj_id_map:
-                        del self.obj_id_map[old.obj_id]
-                if self.queue:
-                    item = self.queue.popleft()
-                    if item.obj_id in self.obj_id_map:
-                        del self.obj_id_map[item.obj_id]
-
-            if item:
-                try:
-                    self.engine.say(item.message)
-                    self.engine.runAndWait()
-                    print(f"[✅ Speech] {item.message}")
-                except Exception as e:
-                    print(f"[Speech Error] {e}")
-            else:
-                time.sleep(0.1)
